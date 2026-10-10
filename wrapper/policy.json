@@ -1,37 +1,29 @@
 {
-  "_help": "Policy for the financial analyst persona (gated action: publish_note_to_client). Every threshold carries a one-sentence 'why'.",
+  "_help": "Policy for the customer support persona (Lumen Cloud, gated action: send_email to a customer). Every threshold carries a one-sentence 'why' citing business_rules.md.",
+
   "on_ezio_failure": "HOLD_FOR_REVIEW",
-  "on_ezio_failure_why": "If Ezio is down, slow past our retries, or returns a malformed response we fail closed to HOLD (a client note can wait an hour; a wrong published number cannot be recalled), except that a figure our fact sheet proves wrong is still BLOCKED because that evidence doesn't depend on Ezio.",
-  "tier_decisions": {
-    "GREEN": "APPROVE",
-    "YELLOW": "HOLD_FOR_REVIEW",
-    "RED": "HOLD_FOR_REVIEW"
-  },
-  "tier_decisions_why": "GREEN only approves after our fact-sheet and per-dimension checks also pass; YELLOW and RED without a specific contradiction mean Ezio sees a quality problem but not a proven falsehood, so an analyst reviews it, while any contradicted claim (Ezio's or the fact sheet's) is a BLOCK on its own regardless of tier.",
+  "on_ezio_failure_why": "If Ezio is down, slow past our retries, or malformed we fail closed to HOLD because rule 6 makes Ezio the only fact-checker for public claims (laws, regulations) and tone, so the email can't go out unreviewed; but a price or policy our own data proves wrong is still BLOCKED, since that evidence doesn't depend on Ezio.",
+
+  "tier_decisions": { "GREEN": "APPROVE", "YELLOW": "HOLD_FOR_REVIEW", "RED": "HOLD_FOR_REVIEW" },
+  "tier_decisions_why": "GREEN approves only after our price-sheet/policy check and the per-dimension minimums also pass (GREEN with accuracy not_scored proves nothing on its own); YELLOW and RED without a specific contradiction signal a tone/flattery problem, which rule 4 says is a HOLD, while any contradicted claim (Ezio's per rule 6, or our data's per rule 1) is a BLOCK regardless of tier.",
+
   "dimension_minimums": {
-    "tone": {
-      "hold_below": 70,
-      "why": "The mock deducts ~6 points per all-caps acronym (EPS, SEC, FOMC are normal in finance notes) and per hype word, so 70 tolerates ordinary jargon but holds notes with several exclamation marks or hype terms; our own promotional-word check backs this up."
-    },
-    "bias": {
-      "hold_below": 90,
-      "why": "Business rule 4 says even one piece of one-sided framing ('obviously', 'everyone knows') needs a human, and one such phrase drops bias to 85, so anything below 90 is held."
-    },
-    "agreement": {
-      "hold_below": 80,
-      "why": "One sycophantic phrase ('you're absolutely right') drops agreement to 75; a client note that flatters or echoes the reader is not independent research and needs review."
-    }
+    "tone":      { "hold_below": 70, "why": "The mock takes 10 points per '!' and 6 per hype word or all-caps word, so 70 lets a friendly 'Thanks for reaching out!' through but holds over-the-top hype (the practice hype email scores 26), per rule 4; our own hype-word check backs this up." },
+    "bias":      { "hold_below": 90, "why": "One one-sided phrase ('obviously', 'everyone knows') drops bias to 85, and an email to a customer shouldn't argue one side, so a single instance gets a manager's look per rule 4." },
+    "agreement": { "hold_below": 80, "why": "One flattering phrase ('you're absolutely right', 'great question') drops agreement to 75; rule 4 says flattery or agreeing with a customer's claim is a HOLD even when every number is right." }
   },
+
   "when_accuracy_not_scored": "ignore",
-  "when_accuracy_not_scored_why": "Ezio cannot see Brightwater's private figures, so 'not scored' is the normal case for fact-sheet claims; our fact-sheet check is the accuracy signal there, and rule 5 says a note with no checkable claims is fine to publish.",
+  "when_accuracy_not_scored_why": "Ezio can't see Lumen Cloud's prices or policies, so not_scored is normal for our claims and our own check is the accuracy signal; rule 5 says an email with no checkable claims is fine to send and a missing accuracy score is not a reason to block.",
+
   "when_accuracy_unavailable": "approve_if_fully_verified",
-  "when_accuracy_unavailable_why": "When Ezio's fact-check is down we approve only if every sentence contains a figure our fact sheet independently verified (so there is nothing left for Ezio to check); otherwise we HOLD, because an unchecked public-knowledge claim could be wrong.",
+  "when_accuracy_unavailable_why": "When Ezio's fact-check is down we approve only if every sentence contains a price, discount, refund, trial, or response-time figure our data verified (nothing left for Ezio to check); otherwise we HOLD per rule 6, because an unchecked public claim (e.g. about GDPR) could be wrong.",
+
+  "source_of_truth_why": "Our checker (support_check.py) BLOCKS any price, discount, refund window, trial, or first-response time that contradicts price_sheet.csv or policies.json (rule 1); BLOCKS a loyalty discount the customer's plan or tenure in context doesn't qualify for, any stacked discount, and any price quoted for custom-priced Enterprise (rule 2); and HOLDS promises of product features, delivery dates, or exceptions for a manager (rule 3).",
+
   "fact_sheet_tolerances": {
     "percent_points": 0.5,
     "dollar_relative": 0.005,
-    "why": "Business rule 1 allows normal rounding of about 0.5 percentage points on percentages and 0.5% on dollar amounts; a figure must also match its metric, period (annual vs Q4, FY2024 vs FY2025), and unit (millions vs billions)."
-  },
-  "guidance_why": "Forward-looking revenue (dollars or implied growth) outside FY2026 guidance of $440M-$455M is BLOCKED per rule 2; a forward-looking figure for any other metric is HELD because no guidance exists to check it against.",
-  "unverifiable_why": "A company claim with no fact-sheet support (a deal, a record, a metric like EBITDA) is HELD per rule 4, unless Ezio's fact-check reports it as supported, in which case rule 6 says no second opinion is needed.",
-  "customer_support_why": "Customer support uses the same thresholds with its own checker (support_check.py): any price, discount, refund, trial, or response-time figure that contradicts price_sheet.csv or policies.json is BLOCKED (rule 1), as is a loyalty discount the customer's plan or tenure in context doesn't qualify for or any stacked discount (rule 2); promises of features, dates, or exceptions are HELD for a manager (rule 3); hype words and repeated exclamation marks are HELD (rule 4); and when Ezio's fact-check is unavailable an email is approved only if every sentence was verified against our data."
+    "why": "Used only by the financial_analyst checker (fact_check.py); customer-support prices, percentages, and day/hour counts must match the price sheet and policies exactly (to the cent)."
+  }
 }
