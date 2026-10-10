@@ -9,6 +9,7 @@ Score yourself: python3 evaluate.py customer_support
 import csv
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -102,6 +103,31 @@ def load_source_of_truth(persona):
     return data
 
 
+MASH_WORD = re.compile(r"^[^aeiouy]+$|[bcdfghjklmnpqrstvwxz]{5,}|(.)\1\1", re.I)
+PLACEHOLDER = re.compile(r"lorem ipsum|\[\s*insert|\bTODO\b|\bTBD\b|<\s*(?:name|customer|insert)[^>]*>|\{\{", re.I)
+FILLER = {"test", "testing", "asdf", "blah", "foo", "bar", "baz", "lorem", "ipsum", "dolor", "sit", "amet", "xxx", "abc", "qwerty", "hello", "hi"}
+
+
+def readability_findings(text):
+    """Input sanity check (any persona): gibberish has no checkable claims and Ezio scores it GREEN 100,
+    so without this it would be approved and sent. Keyboard mash or placeholder text is held for a person."""
+    out = []
+    words_all = [w.lower() for w in re.findall(r"[A-Za-z]+", text)]
+    if PLACEHOLDER.search(text) or (words_all and all(w in FILLER for w in words_all) and set(words_all) - {"hello", "hi"}):
+        return [Finding(HOLD, "The draft contains placeholder or test text, so it can't be sent automatically.", "input_check",
+                        (PLACEHOLDER.search(text).group(0) if PLACEHOLDER.search(text) else words_all[0]))]
+    # split only after a real word (not "U.S.", "Co.", "v."), so citations aren't cut into fragments
+    for sentence in re.split(r"(?<=[a-z]{3}[.!?])\s+|\n+", text.strip()):
+        words = [w.split("'")[0] for w in re.findall(r"[A-Za-z']+", sentence)]   # "you're" -> "you"
+        words = [w for w in words if len(w) > 2]
+        mash = [w for w in words if MASH_WORD.search(w) and not w.isupper()]   # GDPR, SSO, CSV are fine
+        if words and len(mash) >= max(1, len(words) * 0.4):
+            sample = sentence if len(sentence) <= 80 else sentence[:77] + "..."
+            out.append(Finding(HOLD, f"This doesn't read as a coherent message, so it can't be sent automatically: \u201c{sample}\u201d",
+                               "input_check", sample))
+    return out
+
+
 def check_source_of_truth(text, context, sot, signals=None):
     """Independent signal: every figure is compared with the persona's source of truth.
 
@@ -118,7 +144,7 @@ def check_source_of_truth(text, context, sot, signals=None):
         source, promo, reviewer = "price_sheet/policies", support_check.promotional(text), "a manager's review before it goes to the customer"
     else:
         return [], False
-    findings = [Finding(c.level, c.message, source, c.claim) for c in checks]
+    findings = [Finding(c.level, c.message, source, c.claim) for c in checks] + readability_findings(text)
     if promo:
         findings.append(Finding(HOLD, f"Promotional or one-sided wording needs {reviewer}: "
                                 + ", ".join(f"\u201c{w}\u201d" for w in promo) + ".", "tone_rules", promo[0]))

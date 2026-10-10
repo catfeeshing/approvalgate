@@ -16,12 +16,12 @@ PLAN_RE = re.compile(r"\b(Starter|Pro|Business|Enterprise)\b")
 SELF_SERVE = ("Starter", "Pro", "Business")
 
 TOPICS = [
-    ("stacking", r"\b(combin\w*|stack\w*|on top of|together with|in addition to|plus your)\b"),
+    ("stacking", r"\b(combin\w*|stack\w*|on top of|together|in addition to|plus your|as well as|both|at the same time|along with)\b"),
     ("loyalty", r"\bloyal\w*|long[- ]time customer|long[- ]standing customer"),
     ("annual_discount", r"annual(?:ly)? billing discount|annual(?:ly)?[- ]billing|billed (?:annually|yearly)|annual (?:plan )?discount|pay(?:ing)? (?:annually|yearly|for a year)|yearly billing"),
     ("refund", r"\brefund\w*|money[- ]back"),
     ("trial", r"\btrial\b"),
-    ("response", r"\b(first[- ]response|respon[ds]\w*|reply|replies|get back to you|hear back|response time|SLA)\b"),
+    ("response", r"\b(first[- ]response|respon[ds]\w*|reply|replies|replied|get back to you|hear (?:back|from)|response time|SLA|reach out to you|contact you|turnaround|answer)\b"),
     ("tenure", r"\b(customer (?:of|for)|with us (?:for)?|member (?:for|of)|subscriber (?:for|of)|been (?:a customer|with us)|tenure)\b"),
     ("discount", r"\bdiscount\w*|\boff\b|\bsav(?:e|ing|ings)\b|\bcoupon\b|\bpromo\w*"),
     ("price", r"\bprice[ds]?\b|\bcost[s]?\b|\bpric\w+|\bruns\b|\bis\b|\$|\bper month\b|/mo\b|\bmonthly\b"),
@@ -55,6 +55,42 @@ PROMISE_OBJ = re.compile(
     r"next (?:week|month|quarter|release|sprint|update)|exceptions?|waive\w*|free (?:month|upgrade)|extend\w* (?:your )?trial|"
     r"on the house|credit (?:to )?your account|deliver\w*|arriv\w*|custom (?:price|pricing|discount|deal)|special (?:price|pricing|deal|discount))\b",
     re.I)
+# Rule 3, generalized: strong promises, deliverables by a date, and "you will have X by <date>".
+STRONG_PROMISE = re.compile(r"\b(I|we) (?:can )?(?:promise|guarantee)\b|\b(?:I|we)(?:'ll| will) make sure\b|you have my word|rest assured|"
+                            r"\bi swear\b|count on (?:it|me|us)", re.I)
+FUTURE = re.compile(r"\b(will|'ll|going to|gonna|shall)\b", re.I)
+DATE = re.compile(r"\b(?:by|before|on|until|no later than|in time for)\s+(?:the\s+)?(?:end of (?:the )?(?:week|month|quarter|year)|"
+                  r"today|tonight|tomorrow|this (?:week|weekend|month)|next (?:week|month|quarter|year|\w+day)|"
+                  r"(?:mon|tues|wednes|thurs|fri|satur|sun)day|weekend|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s*\d{0,2}|"
+                  r"\d{1,2}(?:st|nd|rd|th)|\d{1,2}/\d{1,2}|q[1-4])\b|\bnext (?:week|month|quarter|release|sprint)\b|\bwithin (?:a|\d+) (?:days?|weeks?|months?)\b", re.I)
+DELIVERABLE = re.compile(r"\b(ready|available|live|fixed|released|shipped|delivered|launched|built|done|finished|completed|deployed|"
+                         r"rolled out|working|resolved|in place|set up|up and running|added|implemented)\b", re.I)
+YOU_WILL_HAVE = re.compile(r"\byou(?:'ll| will| are going to) (?:have|get|receive|see)\b", re.I)
+# the agent's own follow-ups are not product promises ("I'll send you an update by end of day")
+FOLLOW_UP = re.compile(r"\b(update|reply|response|answer|email|call|follow[- ]?up|get back|look into|check (?:in|on)|escalat\w*|"
+                       r"let you know|reach out|keep you posted|send (?:you )?(?:an? |the |your )?(?:update|email|note|summary|invoice|receipt|link|details|copy))\b", re.I)
+PRODUCT = re.compile(r"\b(feature|dashboard|integration|export|import|api|report(?:ing)?|tool|module|app|version|fix|patch|bug ?fix|"
+                     r"functionality|capability|support for|dark mode|sso|plugin|add-?on|workflow|template|analytics|account|migration|server|data)\b", re.I)
+
+
+def promise_claim(s):
+    """Return the phrase that makes this sentence a promise an agent can't make, or None."""
+    m = PROMISE_VERB.search(s) and PROMISE_OBJ.search(s)
+    if m:
+        return m.group(0)
+    product, follow = PRODUCT.search(s), FOLLOW_UP.search(s)
+    only_follow_up = follow and not product
+    strong = STRONG_PROMISE.search(s)
+    if strong and not only_follow_up:
+        return strong.group(0)
+    date = DATE.search(s)
+    if date and FUTURE.search(s) and DELIVERABLE.search(s) and not only_follow_up:
+        return date.group(0)
+    if date and YOU_WILL_HAVE.search(s) and not only_follow_up:
+        return date.group(0)
+    return None
+
+
 HYPE = re.compile(r"\b(amazing|incredible|unbelievable|guarantee[ds]?|best (?:deal|plan|price|value|choice) ever|unbeatable|"
                   r"you(?:'ll| will) love|life[- ]changing|revolutionary|act now|don'?t miss|once[- ]in[- ]a[- ]lifetime|"
                   r"risk[- ]free|100% satisf\w*|no[- ]brainer|insane(?:ly)?|mind[- ]blowing|best[- ]in[- ]class)\b", re.I)
@@ -274,6 +310,8 @@ def check(text, context, policies, price_rows, supported_claims=()):
         # ---- durations: refunds, trials, response times, tenure
         for start, end, n, unit in durs:
             topic = topic_for(start, end, skip=("price", "discount", "stacking", "loyalty", "annual_discount"))
+            if topic is None and unit.lower().startswith(("hour", "hr")):
+                topic = "response"   # the only hour-based commitment in our data is first-response time
             plan = plan_for(start)
             raw_d = s[start:end]
             before = s[max(0, start - 20):start]
@@ -329,9 +367,10 @@ def check(text, context, policies, price_rows, supported_claims=()):
                     add(BLOCK, f"{p} has no free trial.", p)
 
         # ---- promises agents can't make (rule 3)
-        if PROMISE_VERB.search(s) and PROMISE_OBJ.search(s):
+        promise = promise_claim(s)
+        if promise:
             add(HOLD, f"Promises a feature, date, or exception that an agent can't commit to; a manager should review: “{raw}”",
-                PROMISE_OBJ.search(s).group(0))
+                promise)
 
         if plans_here:
             last_plan = plans_here[-1][1]
