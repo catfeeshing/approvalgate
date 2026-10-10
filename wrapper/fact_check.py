@@ -44,7 +44,7 @@ def words_to_number(span):
     total, current, decimals, in_decimal = 0, 0, "", False
     for t in toks:
         if t == "a":
-            current = current or 1
+            pass   # "a hundred" is handled by (current or 1) below; "a fourteen-day" must stay 14
         elif t == "point":
             in_decimal = True
         elif in_decimal:

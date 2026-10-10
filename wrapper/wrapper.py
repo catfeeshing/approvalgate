@@ -16,6 +16,7 @@ from pathlib import Path
 
 import audit
 import fact_check
+import support_check
 import mock_actions
 from ezio_client import EzioError, analyze
 
@@ -108,14 +109,18 @@ def check_source_of_truth(text, context, sot, signals=None):
     verified against the fact sheet and nothing unverified, which is what lets us approve when
     Ezio's fact-check is unavailable.
     """
-    if "fact_sheet" not in sot:
-        return [], False
     supported = [c.get("text", "") for c in (signals.claims if signals else []) if c.get("verdict") == "supported"]
-    checks, coverage = fact_check.check(text, sot["fact_sheet"], supported)
-    findings = [Finding(c.level, c.message, "fact_sheet", c.claim) for c in checks]
-    promo = fact_check.promotional(text)
+    if "fact_sheet" in sot:            # financial_analyst
+        checks, coverage = fact_check.check(text, sot["fact_sheet"], supported)
+        source, promo, reviewer = "fact_sheet", fact_check.promotional(text), "an analyst's review before it reaches a client"
+    elif "policies" in sot and "price_sheet" in sot:   # customer_support
+        checks, coverage = support_check.check(text, context, sot["policies"], sot["price_sheet"], supported)
+        source, promo, reviewer = "price_sheet/policies", support_check.promotional(text), "a manager's review before it goes to the customer"
+    else:
+        return [], False
+    findings = [Finding(c.level, c.message, source, c.claim) for c in checks]
     if promo:
-        findings.append(Finding(HOLD, "Promotional or one-sided wording needs an analyst's review before it reaches a client: "
+        findings.append(Finding(HOLD, f"Promotional or one-sided wording needs {reviewer}: "
                                 + ", ".join(f"\u201c{w}\u201d" for w in promo) + ".", "tone_rules", promo[0]))
     return findings, bool(coverage) and all(coverage)
 
@@ -171,14 +176,14 @@ def apply_policy(signals, findings, policy, fully_verified=False):
 
 def summarize(decision, reasons, verified):
     if decision == APPROVE:
-        lead = "Approved: safe to publish."
+        lead = "Approved: safe to send."
         if verified:
             lead += f" {len(verified)} figure(s)/claim(s) independently verified; no contradictions, promotional language, or weak Ezio dimensions."
         else:
             lead += " No checkable figures or claims, and Ezio found no tone, bias, or agreement problems."
         return lead
-    lead = {BLOCK: "Blocked: the note contradicts the source of truth and must not be published.",
-            HOLD: "Held for analyst review: something in the note cannot be confirmed or reads as promotional."}[decision]
+    lead = {BLOCK: "Blocked: the draft contradicts the source of truth and the action must not run.",
+            HOLD: "Held for review: something in the draft cannot be confirmed, is a promise an agent can't make, or reads as promotional."}[decision]
     return lead + " " + "; ".join(dict.fromkeys(r.rstrip(".") for r in reasons)) + "."
 
 
