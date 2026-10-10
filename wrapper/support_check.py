@@ -16,12 +16,12 @@ PLAN_RE = re.compile(r"\b(Starter|Pro|Business|Enterprise)\b")
 SELF_SERVE = ("Starter", "Pro", "Business")
 
 TOPICS = [
-    ("stacking", r"\b(combin\w*|stack\w*|on top of|together with|in addition to|plus your)\b"),
+    ("stacking", r"\b(combin\w*|stack\w*|on top of|together|in addition to|plus your|as well as|both|at the same time|along with)\b"),
     ("loyalty", r"\bloyal\w*|long[- ]time customer|long[- ]standing customer"),
     ("annual_discount", r"annual(?:ly)? billing discount|annual(?:ly)?[- ]billing|billed (?:annually|yearly)|annual (?:plan )?discount|pay(?:ing)? (?:annually|yearly|for a year)|yearly billing"),
     ("refund", r"\brefund\w*|money[- ]back"),
     ("trial", r"\btrial\b"),
-    ("response", r"\b(first[- ]response|respon[ds]\w*|reply|replies|get back to you|hear back|response time|SLA)\b"),
+    ("response", r"\b(first[- ]response|respon[ds]\w*|reply|replies|replied|get back to you|hear (?:back|from)|response time|SLA|reach out to you|contact you|turnaround|answer)\b"),
     ("tenure", r"\b(customer (?:of|for)|with us (?:for)?|member (?:for|of)|subscriber (?:for|of)|been (?:a customer|with us)|tenure)\b"),
     ("discount", r"\bdiscount\w*|\boff\b|\bsav(?:e|ing|ings)\b|\bcoupon\b|\bpromo\w*"),
     ("price", r"\bprice[ds]?\b|\bcost[s]?\b|\bpric\w+|\bruns\b|\bis\b|\$|\bper month\b|/mo\b|\bmonthly\b"),
@@ -274,6 +274,8 @@ def check(text, context, policies, price_rows, supported_claims=()):
         # ---- durations: refunds, trials, response times, tenure
         for start, end, n, unit in durs:
             topic = topic_for(start, end, skip=("price", "discount", "stacking", "loyalty", "annual_discount"))
+            if topic is None and unit.lower().startswith(("hour", "hr")):
+                topic = "response"   # the only hour-based commitment in our data is first-response time
             plan = plan_for(start)
             raw_d = s[start:end]
             before = s[max(0, start - 20):start]
