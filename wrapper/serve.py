@@ -5,8 +5,11 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import audit
 import mock_actions
 from wrapper import APPROVE, decide
+
+REVIEW_OUTCOMES = {"HOLD_CONFIRMED", "REJECTED", "REVISED"}
 
 UI_DIR = Path(__file__).parent / "ui"
 PERSONAS_DIR = Path(__file__).resolve().parent.parent / "personas"
@@ -54,6 +57,8 @@ class Handler(BaseHTTPRequestHandler):
             if persona not in PERSONAS:
                 return self.send_json(400, {"error": "Unknown persona"})
             return self.send_json(200, {"samples": samples(persona)})
+        if route == "/api/audit":
+            return self.send_json(200, audit.recent())
         served = ui_file(route)
         if served:
             raw, content_type = served
@@ -66,6 +71,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "Unknown endpoint"})
 
     def do_POST(self):
+        if self.path == "/api/review":
+            return self.post_review()
         if self.path != "/decide":
             return self.send_json(404, {"error": "Unknown endpoint"})
         self.connection.settimeout(10)
@@ -93,6 +100,30 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {**asdict(result), "action_executed": execute})
         except Exception:
             self.send_json(500, {"error": "Wrapper failed; inspect the decision implementation"})
+
+    def post_review(self):
+        """Records a reviewer's outcome for a held input. It never runs the action; that stays in /decide."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 100_000:
+                raise ValueError("Body must be 1 to 100000 bytes")
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError("Body must be a JSON object")
+            text, persona = payload.get("text"), payload.get("persona")
+            outcome, note = payload.get("outcome"), payload.get("note")
+            if not isinstance(text, str) or not text.strip() or len(text) > 20000:
+                raise ValueError("text must be a non-empty string of at most 20000 characters")
+            if persona not in PERSONAS:
+                raise ValueError("Unknown persona")
+            if outcome not in REVIEW_OUTCOMES:
+                raise ValueError("outcome must be HOLD_CONFIRMED, REJECTED, or REVISED")
+            if not isinstance(note, str) or not note.strip() or len(note) > 1000:
+                raise ValueError("note must be a non-empty string of at most 1000 characters")
+        except (ValueError, UnicodeDecodeError, OSError):
+            return self.send_json(400, {"error": "Invalid review: supply text, persona, outcome, and a note"})
+        audit.record_review(persona, text, outcome, note.strip())
+        self.send_json(200, {"recorded": True})
 
 
 def main():

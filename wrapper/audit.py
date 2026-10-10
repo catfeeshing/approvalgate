@@ -25,3 +25,42 @@ def record(persona, text, context, decision):
     }
     with _lock, LOG.open("a") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+REVIEWS = LOG.parent / "reviews.jsonl"
+
+
+def record_review(persona, text, outcome, note):
+    """A human's review of a held input. Kept apart from audit_log.jsonl so every decision entry stays unchanged."""
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "persona": persona,
+        "input": text,
+        "decision": "HOLD_FOR_REVIEW",
+        "outcome": outcome,
+        "note": note,
+    }
+    with _lock, REVIEWS.open("a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def _tail(path, limit):
+    if not path.exists():
+        return []
+    entries = []
+    with _lock:
+        lines = path.read_text().splitlines()
+    for line in lines[-limit:]:
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return list(reversed(entries))
+
+
+def recent(limit=50):
+    """Newest-first decisions and reviews for the page's audit view (decision fields without the full Ezio response)."""
+    decisions = [{k: e.get(k) for k in ("timestamp", "persona", "input", "decision", "reason", "context")}
+                 for e in _tail(LOG, limit)]
+    reviews = _tail(REVIEWS, limit)
+    return {"decisions": decisions, "reviews": reviews}

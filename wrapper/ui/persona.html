@@ -1,79 +1,635 @@
 <!doctype html>
 <!--
-  YOUR PERSONA PAGE. This is a skeleton; the UI is yours to design (25 points, optional).
-  Any approach is fine: edit this file, replace it with a built React/Vue/Svelte app in this folder,
-  or write plain JS. wrapper/serve.py serves everything in wrapper/ui/, with persona.html at "/".
-  Offline only: no CDNs or external services at demo time.
-
-  WHAT THE PAGE MUST DO (what judges score)
-    1. SEND AN INPUT, GET A RESPONSE: a draft goes to POST /decide (your wrapper), and the page shows the
-       decision, the reason, the evidence, and whether the mock action ran.
-    2. SIMULATE THE ACTION FROM A TEST INPUT: let the user pick a sample input (GET /api/samples?persona=...),
-       send it, and show the gate working: APPROVE -> the action ran; HOLD/BLOCK -> the action did NOT run.
-    3. Make it usable by someone in your persona's job: clear risk, errors shown plainly, a review step.
-
-  RULES
-    - Decisions come only from POST /decide. Do not decide, call the mock, or run the action in the browser.
-    - Latest test-run results are NOT your job: run `python3 gate.py results` for the color-coded viewer.
+  Persona page. One file serves all three personas: each one is a config entry in PERSONAS below.
+  Select a persona with ?persona=customer_support (default), financial_analyst, or paralegal.
+  Offline only: no CDNs. Decisions come only from POST /decide; the browser never runs the action.
+  See ui/README.md for what is generic and what to change after pulling the updated wrapper.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TODO: your page title</title>
+<title>Approval Gate</title>
 <style>
-  /* TODO: design it. Think about who uses this: the person who is about to send / submit / publish. */
-  body { font: 16px/1.5 system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
-  textarea { width: 100%; min-height: 8rem; }
+  :root { --ok:#1b6e3a; --ok-bg:#e6f4ea; --hold:#8a5a00; --hold-bg:#fff4d6; --block:#a4262c; --block-bg:#fde7e9;
+          --ink:#1d1d1f; --muted:#5f6368; --line:#d0d4da; --accent:#1a4f8b; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, sans-serif; color: var(--ink); margin: 0; background: #f6f7f9; }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 1rem 1.5rem; }
+  header h1 { font-size: 1.25rem; margin: 0; }
+  header p { margin: .25rem 0 0; color: var(--muted); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1.25rem; padding: 1.25rem 1.5rem; max-width: 1200px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.25rem; min-width: 0; }
+  section h2 { font-size: 1rem; margin: 0 0 .75rem; }
+  section h3 { font-size: .95rem; margin: 1rem 0 .25rem; }
+  label { display: block; font-weight: 600; margin: .75rem 0 .25rem; }
+  textarea, select, input { width: 100%; font: inherit; padding: .5rem; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  textarea { min-height: 12rem; resize: vertical; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: .85rem; }
+  .err { color: var(--block); font-weight: 600; }
+  button { font: inherit; padding: .5rem 1rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+  button.secondary { background: #fff; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .badge { display: inline-block; font-weight: 700; font-size: 1.1rem; padding: .35rem .85rem; border-radius: 999px; border: 2px solid; }
+  .APPROVE { color: var(--ok); background: var(--ok-bg); border-color: var(--ok); }
+  .HOLD_FOR_REVIEW { color: var(--hold); background: var(--hold-bg); border-color: var(--hold); }
+  .BLOCK { color: var(--block); background: var(--block-bg); border-color: var(--block); }
+  .consequence { margin: .75rem 0 .5rem; font-weight: 600; }
+  .action { padding: .5rem .75rem; border-radius: 6px; background: #f1f3f4; }
+  .action.ran { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+  .action.notran { background: #f1f3f4; color: var(--muted); font-weight: 600; }
+  .draftPreview { white-space: pre-wrap; border: 1px solid var(--line); border-radius: 6px; padding: .6rem; background: #fbfbfc; }
+  mark { padding: 0 .15em; border-radius: 3px; }
+  mark.BLOCK { background: #f8c9cd; }
+  mark.HOLD_FOR_REVIEW { background: #ffe8a3; }
+  mark.OK { background: #c8ebd3; }
+  ul.findings { padding-left: 0; list-style: none; margin: 0; }
+  ul.findings li { margin: .35rem 0; }
+  .tag { display: inline-block; font-size: .75rem; font-weight: 700; padding: 0 .4rem; border-radius: 4px; border: 1px solid var(--line); margin-right: .35rem; }
+  .signals { display: grid; grid-template-columns: 6.5rem 1fr 3rem; gap: .35rem .6rem; align-items: center; font-size: .9rem; }
+  .bar { height: 8px; background: #e8eaed; border-radius: 4px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; margin-top: .75rem; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
-<h1>TODO: name this screen for your persona's job</h1>
+<header>
+  <h1 id="title">Approval Gate</h1>
+  <p id="subtitle"></p>
+</header>
 
-<!-- TODO (1): inputs. Text is required; context is a JSON object your persona rules may use. -->
-<label for="text">Draft</label>
-<textarea id="text"></textarea>
-<button id="check">Check</button>
+<main>
+  <section id="compose">
+    <h2 id="draftHeading">Draft</h2>
+    <label for="text" id="draftLabel">Draft</label>
+    <textarea id="text"></textarea>
+    <div class="row"><span class="hint" id="count"></span></div>
+    <div id="contextFields"></div>
+    <div class="row" style="margin-top: .75rem">
+      <button id="check">Check draft</button>
+      <span class="hint" id="status"></span>
+    </div>
+    <div id="inputError" class="err" role="alert"></div>
+  </section>
 
-<!-- TODO (2): sample picker. Fill this from /api/samples (see loadSamples below). -->
-<select id="samples"></select>
-<button id="simulate">Simulate with this sample</button>
+  <section id="result" aria-live="polite">
+    <h2>Result</h2>
+    <p class="hint" id="empty">Enter a draft and check it. The decision comes from the wrapper.</p>
+    <div id="resultError" class="err hidden" role="alert"></div>
+    <div id="resultBody" class="hidden">
+      <div id="badge"></div>
+      <p class="consequence" id="consequence"></p>
+      <p class="hint" id="nextStep"></p>
+      <div class="action" id="actionStatus"></div>
 
-<!-- TODO (3): present the result for a human, not as raw JSON. Replace this <pre>. -->
-<pre id="out"></pre>
+      <h3>Reason</h3>
+      <p id="reason"></p>
+
+      <h3>Draft, with flagged text highlighted</h3>
+      <div id="highlighted" class="draftPreview"></div>
+
+      <h3>Findings</h3>
+      <ul id="findings" class="findings"></ul>
+
+      <h3>Ezio signals</h3>
+      <div id="signals"></div>
+
+      <div id="review" class="hidden">
+        <h3>Review</h3>
+        <label for="reviewNote">Reason (required)</label>
+        <textarea id="reviewNote" style="min-height: 4rem"></textarea>
+        <div class="row" style="margin-top: .5rem">
+          <button id="confirmHold" class="secondary">Keep on hold</button>
+          <button id="reject" class="secondary">Reject</button>
+          <button id="reviseRecheck" class="secondary">Revise and re-check</button>
+        </div>
+        <p class="hint">Every review is written to the audit trail. None of them sends or releases the item. "Revise and re-check" records your reason and then runs the edited draft through the gate, so it can be sent only if the gate approves it.</p>
+        <div id="reviewDone" class="hint"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="samples">
+    <h2>Simulate from a sample</h2>
+    <label for="sampleSelect">Test input</label>
+    <select id="sampleSelect"><option>Loading samples…</option></select>
+    <div class="row" style="margin-top: .75rem">
+      <button id="simulate" class="secondary">Simulate with this sample</button>
+      <button id="runAll" class="secondary">Run all samples</button>
+      <span class="hint" id="sampleProgress"></span>
+    </div>
+    <p class="hint">Actions are local mocks. Nothing is sent to a real customer, client, or partner.</p>
+    <table id="runTable" class="hidden">
+      <thead><tr><th>Sample</th><th>Decision</th><th>Action</th><th>Why</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="hint" id="runSummary"></p>
+  </section>
+
+  <section id="log">
+    <div class="row" style="justify-content: space-between">
+      <h2 style="margin: 0">Audit trail</h2>
+      <button id="refreshAudit" class="secondary">Refresh</button>
+    </div>
+    <p class="hint" id="logEmpty">No checks yet.</p>
+    <p class="err hidden" id="logError" role="alert"></p>
+    <ul id="logList" class="findings"></ul>
+  </section>
+</main>
 
 <script>
-// Set this to the persona you chose: customer_support | paralegal | financial_analyst
-const PERSONA = "customer_support";
+// Persona configuration. Only the copy and the context fields differ between personas.
+const PERSONAS = {
+  customer_support: {
+    title: "Customer email check",
+    subtitle: "Check an email before it goes to a customer. The gate decides; the email goes out only when approved.",
+    draftHeading: "Email draft",
+    draftLabel: "Email to the customer",
+    reviewer: "a manager",
+    ran: "Action ran: email sent to the customer.",
+    didNotRun: "Action did not run: email not sent.",
+    consequence: {
+      APPROVE: "Approving sends this email to the customer now.",
+      HOLD_FOR_REVIEW: "Not sent. A manager must review it before it can go out.",
+      BLOCK: "Not sent. It contradicts our price sheet or policy and must be fixed.",
+    },
+    context: [
+      { key: "plan", label: "Customer plan", type: "select", options: ["Starter", "Pro", "Business"] },
+      { key: "customer_tenure_months", label: "Customer tenure (months)", type: "number" },
+    ],
+  },
+  financial_analyst: {
+    title: "Client note check",
+    subtitle: "Check a note before it is published to a client. The gate decides; the note is published only when approved.",
+    draftHeading: "Client note",
+    draftLabel: "Note text",
+    reviewer: "an analyst",
+    ran: "Action ran: note published to the client.",
+    didNotRun: "Action did not run: note not published.",
+    consequence: {
+      APPROVE: "Approving publishes this note to the client now, under the firm's name.",
+      HOLD_FOR_REVIEW: "Not published. An analyst must confirm the flagged claims first.",
+      BLOCK: "Not published. It contradicts the fact sheet and must be corrected.",
+    },
+    context: [],
+  },
+  paralegal: {
+    title: "Memo check",
+    subtitle: "Check a memo before it is submitted to a partner. The gate decides; the memo is submitted only when approved.",
+    draftHeading: "Memo",
+    draftLabel: "Memo text",
+    reviewer: "a reviewer",
+    ran: "Action ran: memo submitted to the partner.",
+    didNotRun: "Action did not run: memo not submitted.",
+    consequence: {
+      APPROVE: "Approving submits this memo to the partner now.",
+      HOLD_FOR_REVIEW: "Not submitted. A reviewer must verify the flagged citations first.",
+      BLOCK: "Not submitted. It cites a case that is fabricated or contradicted.",
+    },
+    context: [],
+  },
+};
 
-// Plumbing: the one call every version of this page makes. Returns {decision, reason, evidence, action_executed, ...}.
+const PERSONA = new URLSearchParams(location.search).get("persona") || "customer_support";
+const CFG = PERSONAS[PERSONA] || PERSONAS.customer_support;
+const MAX_CHARS = 20000;
+const REQUEST_TIMEOUT_MS = 70000;
+const LABEL = { APPROVE: "Approved", HOLD_FOR_REVIEW: "Held for review", BLOCK: "Blocked" };
+const ICON = { APPROVE: "\u2713", HOLD_FOR_REVIEW: "\u23F8", BLOCK: "\u2716" };
+const LEVEL_TAG = { BLOCK: "Block", HOLD_FOR_REVIEW: "Hold", OK: "Verified" };
+const OUTCOME_LABEL = { HOLD_CONFIRMED: "Hold confirmed", REJECTED: "Rejected", REVISED: "Revised and re-checked" };
+let lastDraft = "";
+
+const $ = (id) => document.getElementById(id);
+
+// Plumbing: the one call every version of this page makes. Returns {decision, reason, evidence, findings, signals, action_executed, ...}.
 async function decide(text, context = {}) {
-  const response = await fetch("/decide", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, persona: PERSONA, context }) });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "Request failed");
-  return body;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch("/decide", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, persona: PERSONA, context }), signal: controller.signal,
+    });
+    let body;
+    try { body = await response.json(); } catch { throw new Error(`The wrapper sent an unreadable response (HTTP ${response.status}).`); }
+    if (!response.ok) throw new Error(body.error || `The wrapper returned HTTP ${response.status}.`);
+    return body;
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("The wrapper took longer than 70 seconds. It may still have finished, so check the audit log before trying again.");
+    if (e instanceof TypeError) throw new Error("Cannot reach the wrapper. Is it still running?");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Plumbing: sample inputs from the practice set: [{id, text, context}, ...]
 async function loadSamples() {
   const response = await fetch("/api/samples?persona=" + PERSONA);
+  if (!response.ok) throw new Error("Could not load samples.");
   return (await response.json()).samples;
 }
 
-// TODO: show the result. Decision, reason, and evidence are what a person needs to decide; also show
-// whether the action ran (result.action_executed). Handle loading and errors (including a slow or down Ezio).
-function showResult(result) {
-  document.getElementById("out").textContent = JSON.stringify(result, null, 2);
+function buildContextFields() {
+  const box = $("contextFields");
+  box.replaceChildren();
+  for (const field of CFG.context) {
+    const label = document.createElement("label");
+    label.htmlFor = "ctx-" + field.key;
+    label.textContent = field.label + " (optional)";
+    let input;
+    if (field.type === "select") {
+      input = document.createElement("select");
+      input.append(new Option("Not set", ""));
+      for (const option of field.options) input.append(new Option(option, option));
+    } else {
+      input = document.createElement("input");
+      input.type = field.type;
+      input.min = "0";
+    }
+    input.id = "ctx-" + field.key;
+    box.append(label, input);
+  }
 }
 
-// TODO: wire the buttons. Disable them while a request is running; catch errors and show them.
-document.getElementById("check").onclick = async () => {
-  showResult(await decide(document.getElementById("text").value));
-};
+function readContext() {
+  const context = {};
+  for (const field of CFG.context) {
+    const value = $("ctx-" + field.key).value;
+    if (value !== "") context[field.key] = field.type === "number" ? Number(value) : value;
+  }
+  return context;
+}
 
-// TODO: populate #samples from loadSamples(), then make "Simulate" send the chosen sample's text and context
-// through decide() and show clearly whether the action ran.
+function setContext(context = {}) {
+  for (const field of CFG.context) {
+    $("ctx-" + field.key).value = context[field.key] ?? "";
+  }
+}
+
+function validate(text) {
+  if (!text.trim()) return "Enter a draft before checking.";
+  if (text.length > MAX_CHARS) return `The draft is ${text.length.toLocaleString()} characters. The limit is ${MAX_CHARS.toLocaleString()}; shorten it.`;
+  return "";
+}
+
+function updateCount() {
+  const length = $("text").value.length;
+  $("count").textContent = `${length.toLocaleString()} / ${MAX_CHARS.toLocaleString()} characters`;
+  $("count").classList.toggle("err", length > MAX_CHARS);
+}
+
+function setBusy(busy, message = "") {
+  for (const id of ["check", "simulate", "runAll"]) $(id).disabled = busy;
+  $("status").textContent = message;
+}
+
+function renderDraft(text, findings) {
+  const box = $("highlighted");
+  box.replaceChildren();
+  const spans = [];
+  const lower = text.toLowerCase();
+  for (const f of findings) {
+    if (!f.claim) continue;
+    const start = lower.indexOf(f.claim.toLowerCase());
+    if (start < 0) continue;
+    const end = start + f.claim.length;
+    if (spans.some((s) => start < s.end && end > s.start)) continue;
+    spans.push({ start, end, level: f.level });
+  }
+  spans.sort((a, b) => a.start - b.start);
+  let pos = 0;
+  for (const s of spans) {
+    box.append(text.slice(pos, s.start));
+    const mark = document.createElement("mark");
+    mark.className = s.level;
+    mark.textContent = text.slice(s.start, s.end);
+    box.append(mark);
+    pos = s.end;
+  }
+  box.append(text.slice(pos));
+}
+
+function renderFindings(result) {
+  const list = $("findings");
+  list.replaceChildren();
+  const items = Array.isArray(result.findings) && result.findings.length
+    ? result.findings.map((f) => ({ level: f.level, text: f.message }))
+    : (result.evidence || []).map((line) => ({ level: "", text: line }));
+  if (!items.length) {
+    list.append(liText("No findings were reported.", "hint"));
+    return;
+  }
+  for (const item of items) {
+    const li = document.createElement("li");
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = LEVEL_TAG[item.level] || item.level || "Note";
+    li.append(tag, document.createTextNode(item.text));
+    list.append(li);
+  }
+}
+
+function liText(text, className = "") {
+  const li = document.createElement("li");
+  li.className = className;
+  li.textContent = text;
+  return li;
+}
+
+function bar(label, value) {
+  const row = document.createElement("div");
+  row.style.display = "contents";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const track = document.createElement("div");
+  track.className = "bar";
+  const fill = document.createElement("span");
+  fill.style.width = Math.max(0, Math.min(100, Number(value) || 0)) + "%";
+  track.append(fill);
+  const num = document.createElement("span");
+  num.textContent = value ?? "–";
+  row.append(name, track, num);
+  return row;
+}
+
+// Ezio's signals are shown in full only when they can explain the decision: any decision other than a clean
+// APPROVE, a tier other than GREEN, or an unavailable fact-check. Otherwise a one-line summary is enough.
+function renderSignals(s = {}, decision) {
+  const box = $("signals");
+  box.replaceChildren();
+  if (s.ezio_error) {
+    const p = document.createElement("p");
+    p.className = "err";
+    p.textContent = `Ezio was unavailable (${s.ezio_error}). The decision used our own checks only.`;
+    box.append(p);
+    return;
+  }
+  const accuracy = {
+    scored: `Ezio checked ${s.claims_total ?? 0} claim(s): ${s.claims_verified ?? 0} verified, ${s.claims_contradicted ?? 0} contradicted.`,
+    not_scored: "Ezio checked no public claims. Our own source-of-truth check is the accuracy signal here.",
+    unavailable: "Ezio's fact-check was unavailable.",
+  }[s.accuracy_status] || "Accuracy status not reported.";
+  const summary = document.createElement("p");
+  summary.textContent = `Overall: ${s.tier ?? "–"} (${s.score ?? "–"}). ${accuracy}`;
+  box.append(summary);
+  const explains = decision !== "APPROVE" || s.tier !== "GREEN" || s.accuracy_status === "unavailable";
+  if (!explains) {
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = "Ezio's signals did not affect this decision: no contradictions, and no tone, bias, or agreement concerns.";
+    box.append(note);
+    return;
+  }
+  const grid = document.createElement("div");
+  grid.className = "signals";
+  grid.append(bar("Tone", s.tone), bar("Bias", s.bias), bar("Agreement", s.agreement));
+  box.append(grid);
+}
+
+function showResult(text, result) {
+  if (!LABEL[result.decision]) throw new Error("The wrapper returned an unknown decision.");
+  $("empty").classList.add("hidden");
+  $("resultError").classList.add("hidden");
+  $("resultBody").classList.remove("hidden");
+
+  const badge = $("badge");
+  badge.className = "badge " + result.decision;
+  badge.textContent = `${ICON[result.decision]} ${LABEL[result.decision]}`;
+  $("consequence").textContent = CFG.consequence[result.decision];
+  $("nextStep").textContent = {
+    APPROVE: "Next: nothing else to do. The action has run.",
+    HOLD_FOR_REVIEW: `Next: ${CFG.reviewer} reviews the reason below. You can also fix the flagged text and re-check.`,
+    BLOCK: "Next: fix the flagged text and check again. The action cannot run until the gate approves the draft.",
+  }[result.decision];
+
+  const action = $("actionStatus");
+  action.className = "action " + (result.action_executed ? "ran" : "notran");
+  action.textContent = result.action_executed ? CFG.ran : CFG.didNotRun;
+
+  $("reason").textContent = result.reason;
+  renderDraft(text, result.findings || []);
+  renderFindings(result);
+  renderSignals(result.signals, result.decision);
+  setupReview(result.decision);
+  lastDraft = text;
+  loadAudit();
+}
+
+function showError(message) {
+  $("resultBody").classList.add("hidden");
+  $("empty").classList.add("hidden");
+  const box = $("resultError");
+  box.textContent = message + " Nothing has been retried for you.";
+  box.classList.remove("hidden");
+}
+
+function setupReview(decision) {
+  const review = $("review");
+  review.classList.toggle("hidden", decision !== "HOLD_FOR_REVIEW");
+  $("reviewNote").value = "";
+  $("reviewDone").textContent = "";
+  $("confirmHold").disabled = false;
+  $("reject").disabled = false;
+  $("reviseRecheck").disabled = false;
+}
+
+// Records a review and returns true when it was written to the audit trail.
+async function recordReview(outcome) {
+  const note = $("reviewNote").value.trim();
+  const done = $("reviewDone");
+  if (!note) {
+    done.textContent = "Enter a reason before recording the review.";
+    done.classList.add("err");
+    return false;
+  }
+  for (const id of ["confirmHold", "reject", "reviseRecheck"]) $(id).disabled = true;
+  done.classList.remove("err");
+  done.textContent = "Recording…";
+  try {
+    const response = await fetch("/api/review", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: lastDraft, persona: PERSONA, outcome, note }),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
+    done.textContent = `${OUTCOME_LABEL[outcome]}: recorded in the audit trail. The action did not run.`;
+    loadAudit();
+    return true;
+  } catch (e) {
+    done.classList.add("err");
+    done.textContent = `Not recorded: ${e.message}`;
+    for (const id of ["confirmHold", "reject", "reviseRecheck"]) $(id).disabled = false;
+    return false;
+  }
+}
+
+// Records the reviewer's reason, then sends the edited draft through the gate. The gate alone decides whether it can go.
+async function reviseAndRecheck() {
+  const revised = $("text").value;
+  const problem = validate(revised);
+  $("inputError").textContent = problem;
+  if (problem) return;
+  if (revised === lastDraft) {
+    $("reviewDone").textContent = "Edit the draft above first, then re-check it.";
+    $("reviewDone").classList.add("err");
+    return;
+  }
+  if (await recordReview("REVISED")) await check(revised, readContext());
+}
+
+async function loadAudit() {
+  const error = $("logError");
+  try {
+    const response = await fetch("/api/audit");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { decisions, reviews } = await response.json();
+    error.classList.add("hidden");
+    renderAudit(decisions.filter((d) => d.persona === PERSONA), reviews.filter((r) => r.persona === PERSONA));
+  } catch (e) {
+    error.textContent = `Could not load the audit trail (${e.message}).`;
+    error.classList.remove("hidden");
+  }
+}
+
+function previewText(text = "") {
+  return text.trim().slice(0, 90) + (text.trim().length > 90 ? "…" : "");
+}
+
+function renderAudit(decisions, reviews) {
+  const items = [
+    ...decisions.map((d) => ({ time: d.timestamp, title: `${LABEL[d.decision] || d.decision}: ${previewText(d.input)}`, detail: d.reason })),
+    ...reviews.map((r) => ({ time: r.timestamp, title: `${OUTCOME_LABEL[r.outcome] || r.outcome} (review): ${previewText(r.input)}`, detail: r.note })),
+  ].sort((a, b) => (a.time < b.time ? 1 : -1)).slice(0, 50);
+  const list = $("logList");
+  list.replaceChildren();
+  $("logEmpty").classList.toggle("hidden", items.length > 0);
+  for (const item of items) {
+    const li = document.createElement("li");
+    const when = new Date(item.time).toLocaleString();
+    li.append(document.createTextNode(`${when}  ${item.title}`));
+    const detail = document.createElement("div");
+    detail.className = "hint";
+    detail.textContent = item.detail || "";
+    li.append(detail);
+    list.append(li);
+  }
+}
+
+async function check(text, context) {
+  const problem = validate(text);
+  $("inputError").textContent = problem;
+  if (problem) return;
+  const started = Date.now();
+  const timer = setInterval(() => {
+    $("status").textContent = `Checking… ${Math.round((Date.now() - started) / 1000)}s`;
+  }, 500);
+  setBusy(true, "Checking…");
+  try {
+    showResult(text, await decide(text, context));
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    clearInterval(timer);
+    setBusy(false);
+  }
+}
+
+function sampleLabel(sample) {
+  return `${sample.id}: ${sample.text.slice(0, 70)}${sample.text.length > 70 ? "…" : ""}`;
+}
+
+async function runAll(samples) {
+  const table = $("runTable");
+  table.classList.remove("hidden");
+  const body = table.querySelector("tbody");
+  body.replaceChildren();
+  $("runSummary").textContent = "";
+  const tally = { APPROVE: 0, HOLD_FOR_REVIEW: 0, BLOCK: 0 };
+  let ran = 0, heldOrBlockedRan = 0, errors = 0;
+  setBusy(true);
+  for (let i = 0; i < samples.length; i++) {
+    const sample = samples[i];
+    $("sampleProgress").textContent = `${i + 1} of ${samples.length}…`;
+    const row = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = sampleLabel(sample);
+    const decision = document.createElement("td");
+    const action = document.createElement("td");
+    const why = document.createElement("td");
+    why.style.fontSize = ".85rem";
+    row.append(name, decision, action, why);
+    body.append(row);
+    try {
+      const result = await decide(sample.text, sample.context || {});
+      const badge = document.createElement("span");
+      badge.className = "badge " + result.decision;
+      badge.style.fontSize = ".85rem";
+      badge.textContent = `${ICON[result.decision]} ${LABEL[result.decision]}`;
+      decision.append(badge);
+      action.textContent = result.action_executed ? "Ran" : "Did not run";
+      why.textContent = result.reason;
+      tally[result.decision]++;
+      if (result.action_executed) ran++;
+      if (result.decision !== "APPROVE" && result.action_executed) heldOrBlockedRan++;
+    } catch (e) {
+      errors++;
+      decision.className = "err";
+      decision.textContent = "Error: " + e.message;
+      action.textContent = "Did not run";
+    }
+  }
+  $("sampleProgress").textContent = `Done: ${samples.length} samples.`;
+  $("runSummary").textContent =
+    `Approved ${tally.APPROVE}, held ${tally.HOLD_FOR_REVIEW}, blocked ${tally.BLOCK}` +
+    (errors ? `, errors ${errors}` : "") +
+    `. The action ran ${ran} time(s); held or blocked inputs that reached the action: ${heldOrBlockedRan}.`;
+  setBusy(false);
+  loadAudit();
+}
+
+// Wiring
+buildContextFields();
+$("title").textContent = CFG.title;
+$("subtitle").textContent = CFG.subtitle;
+$("draftHeading").textContent = CFG.draftHeading;
+$("draftLabel").textContent = CFG.draftLabel;
+document.title = CFG.title + " | Approval Gate";
+updateCount();
+loadAudit();
+
+$("text").addEventListener("input", updateCount);
+$("check").onclick = () => check($("text").value, readContext());
+$("confirmHold").onclick = () => recordReview("HOLD_CONFIRMED");
+$("reject").onclick = () => recordReview("REJECTED");
+$("reviseRecheck").onclick = () => reviseAndRecheck();
+$("refreshAudit").onclick = () => loadAudit();
+
+let samples = [];
+loadSamples().then((loaded) => {
+  samples = loaded;
+  const select = $("sampleSelect");
+  select.replaceChildren(...samples.map((s, i) => new Option(sampleLabel(s), String(i))));
+}).catch(() => {
+  $("sampleSelect").replaceChildren(new Option("Samples unavailable", ""));
+  $("sampleSelect").disabled = true;
+  $("simulate").disabled = true;
+  $("runAll").disabled = true;
+});
+
+$("simulate").onclick = () => {
+  const sample = samples[Number($("sampleSelect").value)];
+  if (!sample) return;
+  $("text").value = sample.text;
+  setContext(sample.context || {});
+  updateCount();
+  check(sample.text, sample.context || {});
+};
+$("runAll").onclick = () => runAll(samples);
 </script>
 </body>
 </html>
